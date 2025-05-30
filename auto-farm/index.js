@@ -160,30 +160,36 @@ const parseVillageTxt = (csvData) => {
     const fallbackQueue = [];
 
     for (const attacker of attackers) {
-    const nearbyBarbs = barbarians
-        .filter(barb => !assignedBarbs.has(barb[0]))
-        .map(barb => {
-            const dist = Math.hypot(attacker.x - barb[2], attacker.y - barb[3]);
-            return { barb, dist };
-        })
-        .filter(entry => entry.dist <= MAX_ATTACK_DISTANCE)
-        .sort((a, b) => a.dist - b.dist);
+        const nearbyBarbs = barbarians
+            .filter(barb => !assignedBarbs.has(barb[0]))
+            .map(barb => {
+                const dist = Math.hypot(attacker.x - barb[2], attacker.y - barb[3]);
+                return { barb, dist };
+            })
+            .filter(entry => entry.dist <= MAX_ATTACK_DISTANCE)
+            .sort((a, b) => a.dist - b.dist);
 
-    for (const { barb } of nearbyBarbs) {
-        if (!assignedBarbs.has(barb[0])) {
-            assignedBarbs.add(barb[0]);
-            fallbackQueue.push({ attacker, target: barb });
-            //break; // apenas um ataque por atacante neste loop inicial
+        for (const { barb } of nearbyBarbs) {
+            if (!assignedBarbs.has(barb[0])) {
+                assignedBarbs.add(barb[0]);
+                fallbackQueue.push({ attacker, target: barb });
+                //break; // apenas um ataque por atacante neste loop inicial
+            }
         }
     }
-}
 
+    let lastAttacker = null;
     while (fallbackQueue.length > 0) {
         const { attacker, target } = fallbackQueue.shift();
 
+
         if (exhaustedAttackers.has(attacker.id)) continue;
 
-        await page.goto(`https://br135.tribalwars.com.br/game.php?village=${attacker.id}&screen=overview`, { waitUntil: 'networkidle2' });
+        if (attacker.id !== lastAttacker?.id) {
+            await page.goto(`https://br135.tribalwars.com.br/game.php?village=${attacker.id}&screen=overview`, { waitUntil: 'networkidle2' });
+        }
+        lastAttacker = attacker;
+
         const page_atk = await browser.newPage();
 
         const spy = 1;
