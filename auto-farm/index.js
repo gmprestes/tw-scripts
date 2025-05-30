@@ -5,10 +5,11 @@ const path = require('path');
 const randomUseragent = require('random-useragent');
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const https = require('https');
 puppeteer.use(StealthPlugin());
 
 const NodeCache = require('node-cache');
-const attackCache = new NodeCache({ stdTTL: 3600 }); // Cache de 1h para aldeias já atacadas
+const attackCache = new NodeCache({ stdTTL: 3600 });
 
 const sleep = ms => new Promise(res => setTimeout(res, ms));
 const waitRandom = (min = 800, max = 1500) => sleep(Math.floor(Math.random() * (max - min + 1)) + min);
@@ -26,6 +27,35 @@ async function withRetry(fn, retries = 3, delay = 1000, label = 'Operation') {
     throw new Error(`${label} failed after ${retries} attempts`);
 }
 
+function sendDiscordNotification(message) {
+    const webhookUrl = 'https://discord.com/api/webhooks/1378019502427603015/_JKz_otOBT8AXcfQaZrslraMTPzj0q_THITmgCo9PVIQGALZAkRC7fvQkX4EWrh5tsig';
+    const data = JSON.stringify({ content: message });
+    const url = new URL(webhookUrl);
+
+    const options = {
+        hostname: url.hostname,
+        path: url.pathname + url.search,
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': data.length
+        }
+    };
+
+    const req = https.request(options, res => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+            console.error(`Erro ao enviar Discord webhook: ${res.statusCode}`);
+        }
+    });
+
+    req.on('error', error => {
+        console.error('Erro no webhook Discord:', error);
+    });
+
+    req.write(data);
+    req.end();
+}
+
 const villagePath = path.resolve(__dirname, 'village.txt');
 const errorLogPath = path.resolve(__dirname, 'errors.log');
 
@@ -39,6 +69,7 @@ const isVillageFileFresh = (filePath, maxAgeMs = 3600000) => {
 const logError = (message) => {
     const timestamp = new Date().toISOString();
     fs.appendFileSync(errorLogPath, `[${timestamp}] ${message}\n`);
+    sendDiscordNotification(`❌ Erro: ${message}`);
 };
 
 const downloadVillageTxt = async (page, outputPath = 'village.txt') => {
@@ -61,6 +92,7 @@ const parseVillageTxt = (csvData) => {
 (async () => {
     const browser = await puppeteer.launch({ headless: false });
     const page = await browser.newPage();
+    const attackCountByVillage = {};
 
     await withRetry(() => page.setUserAgent(randomUseragent.getRandom()), 3, 1000, 'Set user agent');
     await withRetry(() => page.goto('https://www.tribalwars.com.br/', { waitUntil: 'networkidle2' }), 3, 2000, 'Go to login page');
@@ -92,7 +124,6 @@ const parseVillageTxt = (csvData) => {
 
     const atk_sender = [16953, 18085, 16916, 17086, 15646, 3481, 15124, 15117, 66896];
 
-    // Busca coordenadas das aldeias atacantes
     const attackers = [];
     for (const id of atk_sender) {
         await page.goto(`https://br135.tribalwars.com.br/game.php?village=${id}&screen=overview`, { waitUntil: 'networkidle2' });
@@ -115,6 +146,7 @@ const parseVillageTxt = (csvData) => {
 
     const assignedBarbs = new Set();
     const usedAttackers = new Set();
+    const exhaustedAttackers = new Set();
     const fallbackQueue = [];
 
     for (const attacker of attackers) {
@@ -138,6 +170,9 @@ const parseVillageTxt = (csvData) => {
 
     while (fallbackQueue.length > 0) {
         const { attacker, target } = fallbackQueue.shift();
+
+        if (exhaustedAttackers.has(attacker.id)) continue;
+
         await page.goto(`https://br135.tribalwars.com.br/game.php?village=${attacker.id}&screen=overview`, { waitUntil: 'networkidle2' });
         const page_atk = await browser.newPage();
 
@@ -158,18 +193,25 @@ const parseVillageTxt = (csvData) => {
             console.log(`✅ Ataque enviado de ${attacker.id} para ${target[2]}|${target[3]} (ID ${target[0]})`);
             usedAttackers.add(attacker.id);
             attackCache.set(target[0], true);
+            attackCountByVillage[attacker.id] = (attackCountByVillage[attacker.id] || 0) + 1;
         } else {
-            const fallback = attackers.find(a => !usedAttackers.has(a.id) && a.id !== attacker.id);
+            exhaustedAttackers.add(attacker.id);
+            const fallback = attackers.find(a => !usedAttackers.has(a.id) && !exhaustedAttackers.has(a.id) && a.id !== attacker.id);
             if (fallback) {
                 console.log(`🔁 Tentando reassociar ${target[2]}|${target[3]} para outro atacante.`);
                 fallbackQueue.push({ attacker: fallback, target });
             } else {
-                console.log(`❌ Sem tropas disponíveis para atacar ${target[2]}|${target[3]} (ID ${target[0]})`);
+                console.log(`❌ Todos os atacantes estão sem tropas. Execução encerrada.`);
+                break;
             }
         }
 
         await page_atk.close();
     }
+
+    const summary = Object.entries(attackCountByVillage).map(([id, count]) => `Aldeia ${id}: ${count} ataque(s)`).join('\n');
+    console.log('\n📊 Relatório Final:\n' + summary);
+    sendDiscordNotification('📊 Relatório Final:\n' + summary);
 
     await page.evaluate(() => alert('Script executado com sucesso!'));
 
