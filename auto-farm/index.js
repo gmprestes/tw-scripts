@@ -15,6 +15,8 @@ const sleep = ms => new Promise(res => setTimeout(res, ms));
 const waitRandom = (min = 800, max = 1500) => sleep(Math.floor(Math.random() * (max - min + 1)) + min);
 const randomDelay = (min = 100, max = 300) => Math.floor(Math.random() * (max - min + 1)) + min;
 
+const MAX_ATTACK_DISTANCE = 50;
+
 async function withRetry(fn, retries = 3, delay = 1000, label = 'Operation') {
     for (let i = 0; i < retries; i++) {
         try {
@@ -158,23 +160,23 @@ const parseVillageTxt = (csvData) => {
     const fallbackQueue = [];
 
     for (const attacker of attackers) {
-        let chosenBarb = null;
-        let minDist = Infinity;
-
-        for (const barb of barbarians) {
-            if (assignedBarbs.has(barb[0])) continue;
+    const nearbyBarbs = barbarians
+        .filter(barb => !assignedBarbs.has(barb[0]))
+        .map(barb => {
             const dist = Math.hypot(attacker.x - barb[2], attacker.y - barb[3]);
-            if (dist < minDist) {
-                minDist = dist;
-                chosenBarb = barb;
-            }
-        }
+            return { barb, dist };
+        })
+        .filter(entry => entry.dist <= MAX_ATTACK_DISTANCE)
+        .sort((a, b) => a.dist - b.dist);
 
-        if (chosenBarb) {
-            assignedBarbs.add(chosenBarb[0]);
-            fallbackQueue.push({ attacker, target: chosenBarb });
+    for (const { barb } of nearbyBarbs) {
+        if (!assignedBarbs.has(barb[0])) {
+            assignedBarbs.add(barb[0]);
+            fallbackQueue.push({ attacker, target: barb });
+            //break; // apenas um ataque por atacante neste loop inicial
         }
     }
+}
 
     while (fallbackQueue.length > 0) {
         const { attacker, target } = fallbackQueue.shift();
@@ -199,7 +201,7 @@ const parseVillageTxt = (csvData) => {
             await page_atk.waitForNavigation({ waitUntil: 'networkidle2' });
 
             console.log(`✅ Ataque enviado de ${attacker.id} para ${target[2]}|${target[3]} (ID ${target[0]})`);
-            usedAttackers.add(attacker.id);
+            //usedAttackers.add(attacker.id);
             attackCache.set(target[0], true);
             attackCountByVillage[attacker.id] = (attackCountByVillage[attacker.id] || 0) + 1;
         } else {
