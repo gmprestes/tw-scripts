@@ -20,7 +20,7 @@ var scriptData = {
 
 // Configurable defaults
 var defaultSpy = 1;
-var defaultLight = 6;
+var defaultLight = 10;
 
 // User Input
 if (typeof DEBUG !== 'boolean') DEBUG = false;
@@ -335,10 +335,6 @@ function findBarbarianVillages() {
 			barbarians.push(village);
 		}
 	});
-
-	if (DEBUG) {
-		console.debug(`${scriptInfo()} Barbarian Villages:`, barbarians);
-	}
 }
 
 // Filter Barbarians
